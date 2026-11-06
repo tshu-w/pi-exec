@@ -7,6 +7,8 @@ export type RunOptions = {
 	signal?: AbortSignal;
 	timeoutMs?: number;
 	input?: string | Buffer;
+	/** Environment of a local script. */
+	env?: NodeJS.ProcessEnv;
 	onStdout?: (data: Buffer) => void;
 	onStderr?: (data: Buffer) => void;
 };
@@ -17,22 +19,24 @@ export function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function command(target: Target, script: string, input: boolean): [string, string[]] {
+function command(target: Target | undefined, script: string, input: boolean): [string, string[]] {
+	if (!target) return ["sh", ["-c", script]];
 	if (target.backend === "ssh") return ["ssh", [formatAddress(target), `sh -c ${shellQuote(script)}`]];
 	const args = ["exec", ...(input ? ["-i"] : []), ...(target.user ? ["-u", target.user] : []), target.host, "sh", "-c", script];
 	return ["docker", args];
 }
 
 /**
- * Runs a shell script in the environment and resolves with its exit code. Abort and timeout stop
- * the local client only; callers stop processes in the environment themselves.
+ * Runs a shell script in the environment, or locally without a target, and resolves with its exit
+ * code. Abort and timeout stop the local client only; callers stop processes in the environment
+ * themselves.
  */
-export function run(target: Target, script: string, options: RunOptions = {}): Promise<number | null> {
+export function run(target: Target | undefined, script: string, options: RunOptions = {}): Promise<number | null> {
 	if (options.signal?.aborted) return Promise.reject(new Error("aborted"));
 
 	return new Promise((resolve, reject) => {
 		const [file, args] = command(target, script, options.input !== undefined);
-		const child = spawn(file, args, { stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
+		const child = spawn(file, args, { stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"], env: options.env });
 		let settled = false;
 		let stopError: Error | undefined;
 		let timeoutTimer: NodeJS.Timeout | undefined;
@@ -77,7 +81,7 @@ export function run(target: Target, script: string, options: RunOptions = {}): P
 }
 
 /** Runs a script and returns its stdout; a non-zero exit fails with its stderr. */
-export async function exec(target: Target, script: string, options: Omit<RunOptions, "onStdout" | "onStderr"> = {}): Promise<Buffer> {
+export async function exec(target: Target | undefined, script: string, options: Omit<RunOptions, "onStdout" | "onStderr"> = {}): Promise<Buffer> {
 	const stdout: Buffer[] = [];
 	const stderr: Buffer[] = [];
 	const code = await run(target, script, {
@@ -85,6 +89,6 @@ export async function exec(target: Target, script: string, options: Omit<RunOpti
 		onStdout: (data) => stdout.push(data),
 		onStderr: (data) => stderr.push(data),
 	});
-	if (code !== 0) throw new Error(Buffer.concat(stderr).toString().trim() || `${target.backend} exited with code ${code}`);
+	if (code !== 0) throw new Error(Buffer.concat(stderr).toString().trim() || `${target?.backend ?? "sh"} exited with code ${code}`);
 	return Buffer.concat(stdout);
 }
