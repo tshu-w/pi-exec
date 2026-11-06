@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 
 process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-exec-home-"));
-const { pi, ai, textOf, createSession, callTool } = await import("./pi.mjs");
+const { pi, ai, textOf, createSession, callTool, notifications } = await import("./pi.mjs");
 
 const IMAGE = process.env.PI_EXEC_TEST_IMAGE ?? "alpine:3";
 const dockerReady = spawnSync("docker", ["image", "inspect", IMAGE], { stdio: "ignore" }).status === 0;
@@ -109,13 +109,6 @@ test("a command ends with its shell, and timeout stops every process it started"
 	const child = sh("cat /work/child.pid").trim();
 	for (let i = 0; i < 50 && alive(child); i++) await new Promise((resolve) => setTimeout(resolve, 100));
 	assert.equal(alive(child), false);
-
-	// Leaving the environment stops what earlier commands left running.
-	const bg = sh("cat /work/bg.pid").trim();
-	assert.equal(alive(bg), true);
-	await session.prompt("/env off");
-	for (let i = 0; i < 50 && alive(bg); i++) await new Promise((resolve) => setTimeout(resolve, 100));
-	assert.equal(alive(bg), false);
 	session.dispose();
 });
 
@@ -134,4 +127,30 @@ test("the system prompt uses the environment, and resuming restores it", { skip 
 	const pwd = await callTool(resumed.session, "bash", { command: "pwd" });
 	assert.equal(textOf(pwd.content), "/work\n");
 	resumed.session.dispose();
+});
+
+test("switching the environment stops its commands", { skip }, async () => {
+	const { session } = await startSession();
+	await session.prompt(`/env docker:${container}:/work`);
+	const background = await callTool(session, "bash", { command: "sleep 300", background: true });
+	const foreground = callTool(session, "bash", { command: "echo partial; sleep 300" });
+	await new Promise((resolve) => setTimeout(resolve, 1000));
+	await session.prompt("/env off");
+	await assert.rejects(foreground, /^Error: partial\n\n\nCommand stopped because the environment changed$/);
+	const [message] = await notifications(session, 1);
+	assert.match(textOf(message.content), new RegExp(`^<bash-result pgid="${background.details.pgid}" status="stopped">\\nCommand: sleep 300\\nWall time [\\d.]+ seconds\\nOutput:\\n\\nCommand stopped because the environment changed\\n</bash-result>$`));
+	assert.equal(alive(background.details.pgid), false);
+	session.dispose();
+});
+
+test("a background command's result survives a dropped connection", { skip }, async () => {
+	const { session } = await startSession();
+	await session.prompt(`/env docker:${container}:/work`);
+	await callTool(session, "bash", { command: "sleep 1; echo after; exit 3", background: true });
+	await new Promise((resolve) => setTimeout(resolve, 300));
+	// Ends the watcher in the container, as a dropped connection does; [c] keeps pkill from matching itself.
+	sh(`pkill -f "^sh -c [c]d '/work'"`);
+	const [message] = await notifications(session, 1);
+	assert.match(textOf(message.content), /status="failed">[\s\S]*Output:\n\nafter\n\n\nCommand exited with code 3\n<\/bash-result>$/);
+	session.dispose();
 });

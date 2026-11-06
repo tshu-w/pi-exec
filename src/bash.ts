@@ -1,173 +1,134 @@
-import { randomBytes } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
-import type { BashOperations } from "@earendil-works/pi-coding-agent";
-import { exec, run, shellQuote } from "./exec.ts";
-import { formatTarget, type Target } from "./target.ts";
+import { rm } from "node:fs/promises";
+import { type AgentToolResult, type BashOperations, createBashToolDefinition, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import { removeLog } from "./detached.ts";
+import { appendStatus, ENDINGS, formatOutput, type Job, type Jobs } from "./jobs.ts";
+import type { Target } from "./target.ts";
 
-const TERMINATION_GRACE_SECONDS = 0.25;
-const PID_WAIT_MS = 5000;
+const MOVED = "pi-exec:moved";
+const ENVIRONMENT_CHANGED = "pi-exec:environment-changed";
 
-/** Process groups of commands started in each environment. */
-export class ProcessGroups {
-	private groups = new Map<string, { target: Target; pids: Set<number> }>();
-
-	add(target: Target, pid: number) {
-		const key = formatTarget(target);
-		const entry = this.groups.get(key) ?? { target, pids: new Set() };
-		entry.pids.add(pid);
-		this.groups.set(key, entry);
-	}
-
-	/** Stops the commands started in `target`, or in every environment. */
-	async stop(target?: Target) {
-		const entries = [...this.groups.values()].filter((entry) => !target || formatTarget(entry.target) === formatTarget(target));
-		await Promise.allSettled(entries.map(async (entry) => {
-			this.groups.delete(formatTarget(entry.target));
-			await killGroups(entry.target, [...entry.pids]);
-		}));
-	}
-}
-
-function killGroups(target: Target, pids: number[]): Promise<unknown> {
-	const groups = pids.map((pid) => `-${pid}`).join(" ");
-	const script = `kill -TERM ${groups} 2>/dev/null; sleep ${TERMINATION_GRACE_SECONDS}; kill -KILL ${groups} 2>/dev/null; true`;
-	return run(target, script, { timeoutMs: 10_000 }).catch(() => {});
-}
+type BashOptions = {
+	/** Shell and arguments before the command; by default bash, or sh, in the environment. */
+	shell?: string[];
+	/** Moves the command to the background after this long; never when undefined. */
+	moveAfterMs?: number;
+	onJob?: (job: Job) => void;
+};
 
 /**
- * Bash operations in the environment. The command runs in its own process group, which a timeout
- * or abort kills. The call ends when the command's shell exits, even if background processes keep
- * its output open.
+ * Bash operations that run each command detached in the environment, or locally without a target.
+ * A timeout or abort stops the command's process group. The call ends when the command's shell
+ * exits, even if background processes keep its output open.
  */
-export function createBashOperations(getTarget: () => Target, groups: ProcessGroups): BashOperations {
+export function createBashOperations(jobs: Jobs, target: Target | undefined, options: BashOptions = {}): BashOperations {
 	return {
-		exec: (command, cwd, { onData, signal, timeout, env }) => {
-			const target = getTarget();
-			const token = `__pi_env_exit_${randomBytes(8).toString("hex")}__`;
-			const exports = Object.entries(env ?? {})
-				.filter(([name, value]) => name.startsWith("PI_") && value !== undefined)
-				.map(([name, value]) => `export ${name}=${shellQuote(value!)}\n`)
-				.join("");
-			const script =
-				`cd ${shellQuote(cwd)} 2>/dev/null || { printf 'nocwd\\n' >&2; exit 1; }\n` +
-				exports +
-				`if command -v bash >/dev/null 2>&1; then shell=bash; else shell=sh; fi\n` +
-				// macOS has no setsid; perl starts the process group there.
-				`if command -v setsid >/dev/null 2>&1; then group=setsid; else group='perl -e setpgrp;exec@ARGV'; fi\n` +
-				`$group "$shell" -c ${shellQuote(command)} </dev/null 2>&1 &\n` +
-				`pid=$!\nprintf 'pid %s\\n' "$pid" >&2\nwait "$pid"\nprintf '%s %s\\n' ${token} "$?"\n`;
-
-			return new Promise((resolve, reject) => {
-				const client = new AbortController();
-				let pending = Buffer.alloc(0);
-				let stderr = "";
-				let pid: number | undefined;
-				let onPid: (() => void) | undefined;
-				let settled = false;
-				let timer: NodeJS.Timeout | undefined;
-
-				const finish = (error: Error | undefined, exitCode?: number) => {
-					if (settled) return;
-					settled = true;
-					if (timer) clearTimeout(timer);
-					signal?.removeEventListener("abort", onAbort);
-					if (error) reject(error);
-					else resolve({ exitCode: exitCode ?? null });
-				};
-				const stop = (error: Error) => {
-					if (settled) return;
-					finish(error);
-					void (async () => {
-						if (pid === undefined) {
-							await new Promise<void>((done) => {
-								onPid = done;
-								setTimeout(done, PID_WAIT_MS);
-							});
-						}
-						if (pid !== undefined) await killGroups(target, [pid]);
-						client.abort();
-					})();
-				};
-				const onAbort = () => stop(new Error("aborted"));
-
-				const onStdout = (data: Buffer) => {
-					if (settled) return;
-					pending = Buffer.concat([pending, data]);
-					const index = pending.indexOf(token);
-					if (index === -1) {
-						const keep = Math.min(pending.length, token.length + 1);
-						if (pending.length > keep) onData(pending.subarray(0, pending.length - keep));
-						pending = pending.subarray(pending.length - keep);
-						return;
-					}
-					const status = pending.subarray(index + token.length).toString().match(/^ (\d+)\n/);
-					if (!status) return;
-					if (index > 0) onData(pending.subarray(0, index));
-					finish(undefined, Number(status[1]));
-					client.abort();
-				};
-				const onStderr = (data: Buffer) => {
-					stderr += data.toString();
-					const match = stderr.match(/^pid (\d+)\n/m);
-					if (pid === undefined && match) {
-						pid = Number(match[1]);
-						groups.add(target, pid);
-						onPid?.();
-					}
-				};
-
-				signal?.addEventListener("abort", onAbort, { once: true });
-				if (signal?.aborted) return onAbort();
-				if (timeout !== undefined) timer = setTimeout(() => stop(new Error(`timeout:${timeout}`)), timeout * 1000);
-
-				run(target, script, { signal: client.signal, onStdout, onStderr }).then(
-					(code) => {
-						if (settled) return;
-						if (stderr.startsWith("nocwd\n")) return finish(new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`));
-						if (pending.length > 0) onData(pending);
-						const message = stderr.replace(/^pid \d+\n/m, "").trim();
-						finish(new Error(message || `${target.backend} exited with code ${code}`));
-					},
-					(error) => finish(error),
-				);
-			});
+		exec: async (command, cwd, { onData, signal, timeout, env }) => {
+			if (signal?.aborted) throw new Error("aborted");
+			const exports = target
+				? Object.fromEntries(Object.entries(env ?? {}).filter((entry): entry is [string, string] => entry[0].startsWith("PI_") && entry[1] !== undefined))
+				: undefined;
+			const job = jobs.start(target, { command, cwd, exports, env: target ? undefined : env, shell: options.shell }, timeout);
+			job.onData = onData;
+			options.onJob?.(job);
+			const onAbort = () => void jobs.stop(job, "aborted");
+			signal?.addEventListener("abort", onAbort, { once: true });
+			let timer: NodeJS.Timeout | undefined;
+			try {
+				await job.started.catch((error: unknown) => {
+					if (job.reason === "aborted") throw new Error("aborted");
+					if (job.reason === "timeout") throw new Error(`timeout:${timeout}`);
+					if (job.reason === "environment") throw new Error(ENVIRONMENT_CHANGED);
+					if (error instanceof Error && error.message === "nocwd") throw new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`);
+					throw error;
+				});
+				const moved = new Promise<"moved">((resolve) => {
+					if (options.moveAfterMs !== undefined) timer = setTimeout(() => resolve("moved"), options.moveAfterMs);
+				});
+				if (await Promise.race([job.ended, moved]) === "moved" && job.status === "running") {
+					jobs.moveToBackground(job);
+					throw new Error(MOVED);
+				}
+			} finally {
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", onAbort);
+			}
+			if (job.reason === "aborted") throw new Error("aborted");
+			if (job.reason === "timeout") throw new Error(`timeout:${timeout}`);
+			if (job.reason === "environment") throw new Error(ENVIRONMENT_CHANGED);
+			return { exitCode: job.exitCode ?? null };
 		},
 	};
 }
 
-type ToolResult = {
-	content: Array<{ type: string; text?: string }>;
-	details?: any;
-	structuredContent?: any;
-};
-
-/** Moves a full output file that Pi saved locally into the environment. */
-async function upload(target: Target, localPath: string): Promise<string> {
-	const content = await readFile(localPath);
-	const script = `f=$(mktemp "\${TMPDIR:-/tmp}/pi-bash-XXXXXX") && cat > "$f" && printf %s "$f"`;
-	const remotePath = (await exec(target, script, { input: content })).toString();
-	await rm(localPath, { force: true });
-	return remotePath;
+/** Operations for user `!` commands, whose full output Pi keeps itself. */
+export function createUserBashOperations(jobs: Jobs, target: Target): BashOperations {
+	let job: Job | undefined;
+	const ops = createBashOperations(jobs, target, { onJob: (started) => (job = started) });
+	return {
+		exec: async (command, cwd, options) => {
+			try {
+				return await ops.exec(command, cwd, options);
+			} catch (error) {
+				throw error instanceof Error && error.message === ENVIRONMENT_CHANGED ? new Error("aborted") : error;
+			} finally {
+				if (job?.detached) void removeLog(target, job.detached.log);
+			}
+		},
+	};
 }
 
-/** Saves a bash result's full output in the environment and points the result at it. */
-export async function relocateResult<T extends ToolResult>(target: Target, result: T): Promise<T> {
-	const localPath: string | undefined = result.details?.fullOutputPath;
-	if (!localPath) return result;
-	const remotePath = await upload(target, localPath);
-	for (const block of result.content) {
-		if (block.type === "text" && block.text) block.text = block.text.replaceAll(localPath, remotePath);
+type ToolResult = AgentToolResult<any> & { structuredContent?: any; isError?: boolean };
+
+/**
+ * Runs Pi's bash tool with job operations. The full output file is the command's log in the
+ * environment, which is removed unless the output was truncated or the command moved to the
+ * background. A moved command returns at once.
+ */
+export async function executeBash(
+	jobs: Jobs,
+	target: Target | undefined,
+	cwd: string,
+	options: BashOptions & { started?: boolean; commandPrefix?: string },
+	[id, params, signal, onUpdate, ctx]: [string, { command: string; timeout?: number }, AbortSignal | undefined, ((result: any) => void) | undefined, ExtensionToolContext],
+): Promise<ToolResult> {
+	let job: Job | undefined;
+	// Pi's own full output file, which the log replaces.
+	let localPath: string | undefined;
+	const tool = createBashToolDefinition(cwd, { commandPrefix: options.commandPrefix, operations: createBashOperations(jobs, target, { ...options, onJob: (started) => (job = started) }) });
+	const update = (partial: ToolResult) => {
+		localPath = partial.details?.fullOutputPath ?? localPath;
+		if (localPath && job?.detached) partial.details.fullOutputPath = job.detached.log;
+		onUpdate?.(partial);
+	};
+	const relocate = (text: string) => localPath && job?.detached ? text.replaceAll(localPath, job.detached.log) : text;
+	const discardLog = () => {
+		if (job?.detached && !localPath) void removeLog(target, job.detached.log);
+	};
+	try {
+		const result = await tool.execute(id, { command: params.command, timeout: params.timeout }, signal, update, ctx) as ToolResult;
+		localPath = result.details?.fullOutputPath ?? localPath;
+		discardLog();
+		if (!localPath || !job?.detached) return result;
+		for (const block of result.content) if (block.type === "text" && block.text) block.text = relocate(block.text);
+		result.details.fullOutputPath = job.detached.log;
+		if (result.structuredContent?.full_output_path) result.structuredContent.full_output_path = job.detached.log;
+		return result;
+	} catch (error) {
+		if (!(error instanceof Error) || !job) throw error;
+		if (error.message === ENVIRONMENT_CHANGED) {
+			const { text, truncation } = formatOutput(job.tail, job.detached?.log ?? "", "");
+			if (!truncation && job.detached) void removeLog(target, job.detached.log);
+			throw new Error(appendStatus(text, ENDINGS.environment));
+		}
+		if (!job.detached) throw error;
+		const { pgid, log } = job.detached;
+		if (error.message === MOVED) {
+			const text = options.started ? `Command started (process group ${pgid}). Full output: ${log}` : `Command moved to the background (process group ${pgid}). Full output: ${log}`;
+			return { content: [{ type: "text", text }], details: { pgid, fullOutputPath: log } };
+		}
+		discardLog();
+		throw new Error(relocate(error.message));
+	} finally {
+		if (localPath) await rm(localPath, { force: true });
 	}
-	result.details.fullOutputPath = remotePath;
-	if (result.structuredContent?.full_output_path) result.structuredContent.full_output_path = remotePath;
-	return result;
-}
-
-/** Same as relocateResult, for a failed command whose error names the full output. */
-export async function relocateError(target: Target, error: unknown): Promise<unknown> {
-	if (!(error instanceof Error)) return error;
-	const localPath = error.message.match(/Full output: (.+?)\]/)?.[1];
-	if (!localPath) return error;
-	const remotePath = await upload(target, localPath);
-	return new Error(error.message.replaceAll(localPath, remotePath));
 }

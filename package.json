@@ -1,7 +1,7 @@
 {
 	"name": "pi-exec",
 	"version": "0.1.0",
-	"description": "Run Pi's tools in a Docker container or on an SSH host.",
+	"description": "Run Pi's tools in a Docker container or on an SSH host, and long commands in the background.",
 	"keywords": ["pi-package", "pi-extension", "docker", "ssh"],
 	"license": "AGPL-3.0-only",
 	"repository": "github:tshu-w/pi-exec",

@@ -1,0 +1,66 @@
+import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+
+process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-exec-background-home-"));
+writeFileSync(join(process.env.PI_CODING_AGENT_DIR, "settings.json"), JSON.stringify({ "pi-exec": { backgroundAfterSecs: 1 } }));
+const { pi, ai, textOf, createSession, callTool, notifications } = await import("./pi.mjs");
+
+const start = (cwd) => createSession({
+	cwd,
+	route: () => ai.fauxAssistantMessage("ok"),
+	sessionManager: pi.SessionManager.create(cwd, join(cwd, "sessions")),
+	tools: ["bash"],
+});
+
+test("a long command moves to the background, and its notification follows Pi's bash result", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-exec-background-"));
+	const session = await start(cwd);
+	try {
+		const moved = await callTool(session, "bash", { command: "sleep 1.5; seq 1 3000; exit 1" });
+		const { pgid, fullOutputPath } = moved.details;
+		assert.equal(textOf(moved.content), `Command moved to the background (process group ${pgid}). Full output: ${fullOutputPath}`);
+		assert.equal(moved.structuredContent, undefined);
+
+		const [message] = await notifications(session, 1);
+		const lines = Array.from({ length: 2000 }, (_, i) => i + 1001).join("\n");
+		assert.match(textOf(message.content), new RegExp(`^<bash-result pgid="${pgid}" status="failed">\nCommand: sleep 1.5; seq 1 3000; exit 1\nWall time [\\d.]+ seconds\nOutput:\n\n`));
+		assert.ok(textOf(message.content).endsWith(`\n\n${lines}\n\n[Showing lines 1001-3000 of 3000. Full output: ${fullOutputPath}]\n\nCommand exited with code 1\n</bash-result>`));
+		assert.deepEqual(Object.keys(message.details).sort(), ["command", "fullOutputPath", "pgid", "seconds", "status", "truncation"]);
+		assert.equal(readFileSync(fullOutputPath, "utf8").split("\n").length, 3001);
+
+		const started = await callTool(session, "bash", { command: "printf 'one\\ntwo'", background: true });
+		assert.match(textOf(started.content), /^Command started \(process group \d+\)\. Full output: .+\.log$/);
+		const [, done] = await notifications(session, 2);
+		assert.match(textOf(done.content), /status="completed">\nCommand: printf 'one\\ntwo'\nWall time [\d.]+ seconds\nOutput:\n\none\ntwo\n<\/bash-result>$/);
+		assert.equal(done.details.fullOutputPath, undefined);
+
+		// A foreground command does not leave its log behind.
+		const quick = await callTool(session, "bash", { command: "echo $PI_SESSION_ID" });
+		assert.equal(textOf(quick.content), `${session.sessionManager.getSessionId()}\n`);
+
+		const id = "parent/1";
+		const nested = session.getToolDefinition("bash").execute(id, { command: "true", background: true }, undefined, undefined, session.extensionRunner.createToolContext(id));
+		await assert.rejects(nested, /^Error: `background` is not available in nested tool calls\.$/);
+	} finally {
+		session.dispose();
+	}
+});
+
+test("leaving the session stops background commands without notifications", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-exec-background-"));
+	const session = await start(cwd);
+	const pidFile = join(cwd, "pid");
+	await callTool(session, "bash", { command: `echo $$ > ${pidFile}; exec sleep 300`, background: true });
+	for (let i = 0; i < 50 && !existsSync(pidFile); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+	const pid = Number(readFileSync(pidFile, "utf8"));
+	await session.extensionRunner.emit({ type: "session_shutdown" });
+	const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+	for (let i = 0; i < 50 && alive(); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+	assert.equal(alive(), false);
+	await new Promise((resolve) => setTimeout(resolve, 500));
+	assert.equal(session.messages.filter((message) => message.customType === "bash-result").length, 0);
+	session.dispose();
+});

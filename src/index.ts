@@ -12,14 +12,20 @@ import {
 	createWriteToolDefinition,
 	type ExtensionAPI,
 	type ExtensionContext,
+	type ExtensionToolContext,
 	getAgentDir,
+	getShellConfig,
+	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import { createBashOperations, ProcessGroups, relocateError, relocateResult } from "./bash.ts";
+import { Type } from "typebox";
+import { createUserBashOperations, executeBash } from "./bash.ts";
 import { loadContextFiles } from "./context.ts";
 import { exec, shellQuote } from "./exec.ts";
 import { createEditOperations, createFindOperations, createLsOperations, createReadOperations, createWriteOperations } from "./files.ts";
 import { grep } from "./grep.ts";
+import { type BashResultDetails, Jobs, MESSAGE_TYPE } from "./jobs.ts";
+import { registerJobsUi, renderBashResult } from "./ui.ts";
 import {
 	type Environment,
 	expandHome,
@@ -32,6 +38,8 @@ import {
 } from "./target.ts";
 
 const ENTRY_TYPE = "env-state";
+const SETTINGS_KEY = "pi-exec";
+const DEFAULT_BACKGROUND_AFTER_SECS = 120;
 const ENV_TOOLS = ["read", "write", "edit", "bash", "grep", "find", "ls"];
 
 type PersistedState = { environment: string; home: string } | { environment: null; error?: string };
@@ -106,7 +114,13 @@ export default function (pi: ExtensionAPI) {
 	pi.registerFlag("env", { description: `Execution environment: ${USAGE}`, type: "string" });
 
 	const initialCwd = process.cwd();
-	const groups = new ProcessGroups();
+	const jobs = new Jobs((text, details) => pi.sendMessage<BashResultDetails>(
+		{ customType: MESSAGE_TYPE, content: text, display: true, details },
+		{ deliverAs: "steer", triggerTurn: true },
+	));
+	let backgroundAfterSecs = DEFAULT_BACKGROUND_AFTER_SECS;
+	let shellPath: string | undefined;
+	let shellCommandPrefix: string | undefined;
 	let active: Environment | null = null;
 	// Set when a requested environment failed; tools must not fall back to local execution.
 	let failure: string | undefined;
@@ -134,7 +148,7 @@ export default function (pi: ExtensionAPI) {
 		const previous = active;
 		active = next;
 		failure = next ? undefined : error;
-		if (previous && !sameTarget(previous.target, next?.target)) void groups.stop(previous.target);
+		if (!sameTarget(previous?.target, next?.target)) jobs.stopOutside(next?.target);
 		updateStatus(ctx);
 	};
 
@@ -202,19 +216,36 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerTool({
+	const bash = {
 		...base.bash,
-		async execute(id, params, signal, onUpdate, ctx) {
+		description: `${base.bash.description} When a background command ends, you receive a notification with the result.`,
+		promptGuidelines: [
+			...base.bash.promptGuidelines ?? [],
+			"Use `background=true` for servers, watchers, and other commands that do not exit on their own; do not poll a background command for its end.",
+		],
+		parameters: Type.Object({
+			...base.bash.parameters.properties,
+			background: Type.Optional(Type.Boolean({ description: "Whether to return at once and run the command in the background (default: false)" })),
+		}),
+		async execute(id: string, params: { command: string; timeout?: number; background?: boolean }, signal: AbortSignal | undefined, onUpdate: any, ctx: ExtensionToolContext) {
 			const env = current();
-			if (!env) return createBashToolDefinition(ctx.cwd).execute(id, params, signal, onUpdate, ctx);
-			const tool = createBashToolDefinition(env.cwd, { operations: createBashOperations(() => env.target, groups) });
-			try {
-				return await relocateResult(env.target, await tool.execute(id, params, signal, onUpdate, { ...ctx, cwd: env.cwd }));
-			} catch (error) {
-				throw await relocateError(env.target, error);
-			}
+			// Pi numbers the calls another tool makes `<calling id>/<n>`.
+			const nested = id.includes("/");
+			if (params.background && nested) throw new Error("`background` is not available in nested tool calls.");
+			const moveAfterMs = params.background ? 0 : nested ? undefined : backgroundAfterSecs * 1000;
+			// Pi's shell settings are for the local shell.
+			const options = { moveAfterMs, started: params.background, ...(!env && { shell: localShell(), commandPrefix: shellCommandPrefix }) };
+			return executeBash(jobs, env?.target, env?.cwd ?? ctx.cwd, options, [id, params, signal, onUpdate, env ? { ...ctx, cwd: env.cwd } : ctx]);
 		},
-	});
+		renderResult: renderBashResult(base.bash.renderResult!),
+	};
+	pi.registerTool(bash);
+	const ui = registerJobsUi(pi, jobs, bash);
+
+	const localShell = () => {
+		const { shell, args } = getShellConfig(shellPath);
+		return [shell, ...args];
+	};
 
 	pi.registerTool({
 		...base.grep,
@@ -299,6 +330,15 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (event, ctx) => {
+		const settings = SettingsManager.create(ctx.cwd, getAgentDir());
+		shellPath = settings.getShellPath();
+		shellCommandPrefix = settings.getShellCommandPrefix();
+		const seconds = (settings.getSettings() as Record<string, any>)[SETTINGS_KEY]?.backgroundAfterSecs;
+		const valid = typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0;
+		if (seconds !== undefined && !valid) console.warn(`[pi-exec] invalid backgroundAfterSecs ${JSON.stringify(seconds)}; using ${DEFAULT_BACKGROUND_AFTER_SECS}`);
+		backgroundAfterSecs = valid ? seconds : DEFAULT_BACKGROUND_AFTER_SECS;
+		jobs.open();
+		ui.start(ctx);
 		const flag = pi.getFlag("env");
 		const persisted = findPersisted(ctx.sessionManager.getBranch() as SessionEntry[]);
 		if (typeof flag === "string" && flag.trim() && (event.reason === "startup" || event.reason === "new" || !persisted.found)) {
@@ -322,13 +362,14 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async () => {
 		active = null;
-		await groups.stop();
+		ui.stop();
+		await jobs.shutdown();
 	});
 
 	pi.on("user_bash", () => {
 		const env = current();
 		if (!env) return;
-		const ops = createBashOperations(() => env.target, groups);
+		const ops = createUserBashOperations(jobs, env.target);
 		return { operations: { exec: (command, _cwd, options) => ops.exec(command, env.cwd, options) } };
 	});
 

@@ -1,7 +1,7 @@
 # Pi Exec
 
 Pi Exec runs Pi's tools in a Docker container or on an SSH host, while Pi
-itself stays local.
+itself stays local, and runs long commands in the background.
 
 ```bash
 pi install git:github.com/tshu-w/pi-exec
@@ -22,6 +22,16 @@ Built-in tools and user `!` commands run in the environment, and paths are
 paths there. Project context files such as `AGENTS.md` are read from the
 environment. The environment is saved with the session. If `--env` cannot be
 reached, tools fail instead of running locally.
+
+A `bash` command still running after `backgroundAfterSecs` (default 120)
+moves to the background, and the model is notified when it ends. `/jobs`
+lists them. See [docs/BACKGROUND.md](docs/BACKGROUND.md).
+
+## Configuration
+
+```json
+"pi-exec": { "backgroundAfterSecs": 120 }
+```
 
 ## Requirements
 

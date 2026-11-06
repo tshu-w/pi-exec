@@ -30,6 +30,17 @@ export async function createSession({ cwd, route, flags = {}, ...options }) {
 	return session;
 }
 
+/** Waits until the Session has `count` background command notifications, and returns them. */
+export async function notifications(session, count, timeoutMs = 20_000) {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const found = session.messages.filter((message) => message.role === "custom" && message.customType === "bash-result");
+		if (found.length >= count) return found;
+		if (Date.now() > deadline) throw new Error(`${found.length} of ${count} notifications`);
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+}
+
 /** Calls a tool of the Session; resolves with its result or rejects with its error. */
 export function callTool(session, name, args, signal = new AbortController().signal) {
 	const id = `test-${Math.random().toString(36).slice(2)}`;
