@@ -1,10 +1,10 @@
 {
-	"name": "pi-env",
+	"name": "pi-exec",
 	"version": "0.1.0",
 	"description": "Run Pi's tools in a Docker container or on an SSH host.",
 	"keywords": ["pi-package", "pi-extension", "docker", "ssh"],
 	"license": "AGPL-3.0-only",
-	"repository": "github:tshu-w/pi-env",
+	"repository": "github:tshu-w/pi-exec",
 	"type": "module",
 	"scripts": {
 		"test": "node --test --test-timeout=60000 tests/",

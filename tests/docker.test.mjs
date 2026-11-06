@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 
-process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-env-home-"));
+process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-exec-home-"));
 const { pi, ai, textOf, createSession, callTool } = await import("./pi.mjs");
 
-const IMAGE = process.env.PI_ENV_TEST_IMAGE ?? "alpine:3";
+const IMAGE = process.env.PI_EXEC_TEST_IMAGE ?? "alpine:3";
 const dockerReady = spawnSync("docker", ["image", "inspect", IMAGE], { stdio: "ignore" }).status === 0;
-const container = `pi-env-test-${process.pid}`;
+const container = `pi-exec-test-${process.pid}`;
 const sh = (script) => execFileSync("docker", ["exec", container, "sh", "-c", script], { encoding: "utf8" });
 const alive = (pid) => spawnSync("docker", ["exec", container, "kill", "-0", pid]).status === 0;
 
@@ -26,7 +26,7 @@ after(() => {
 });
 
 async function startSession(options = {}) {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-env-cwd-"));
+	const cwd = mkdtempSync(join(tmpdir(), "pi-exec-cwd-"));
 	const prompts = [];
 	const route = (context) => {
 		const system = context.messages.find((message) => message.role === "system");
@@ -124,7 +124,7 @@ test("the system prompt uses the environment, and resuming restores it", { skip 
 	await session.prompt(`/env docker:${container}:/work`);
 	await session.prompt("hi");
 	const prompt = prompts.at(-1);
-	assert.match(prompt, /Execution environment: docker:pi-env-test-\d+\. read, write, edit, bash, grep, find, ls, and user ! commands execute there; other tools run locally\./);
+	assert.match(prompt, /Execution environment: docker:pi-exec-test-\d+\. read, write, edit, bash, grep, find, ls, and user ! commands execute there; other tools run locally\./);
 	assert.match(prompt, /Project rules/);
 	assert.match(prompt, /\/work/);
 	const file = session.sessionManager.getSessionFile();

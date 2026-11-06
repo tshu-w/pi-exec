@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 
-process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-env-home-"));
+process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-exec-home-"));
 const { pi, ai, textOf, createSession, callTool } = await import("./pi.mjs");
 
-const HOST = process.env.PI_ENV_TEST_SSH ?? "localhost";
+const HOST = process.env.PI_EXEC_TEST_SSH ?? "localhost";
 const ssh = (script) => execFileSync("ssh", ["-o", "BatchMode=yes", HOST, script], { encoding: "utf8" });
 const sshReady = spawnSync("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", HOST, "true"], { stdio: "ignore" }).status === 0;
 const alive = (pid) => spawnSync("ssh", ["-o", "BatchMode=yes", HOST, `kill -0 ${pid}`], { stdio: "ignore" }).status === 0;
@@ -25,7 +25,7 @@ after(() => {
 });
 
 test("tools run on the SSH host, and timeout stops every process", { skip: !sshReady && `ssh ${HOST} is not available` }, async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-env-cwd-"));
+	const cwd = mkdtempSync(join(tmpdir(), "pi-exec-cwd-"));
 	const session = await createSession({
 		cwd,
 		route: () => ai.fauxAssistantMessage("ok"),

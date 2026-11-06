@@ -1,10 +1,10 @@
-# Pi Env
+# Pi Exec
 
-Pi Env runs Pi's tools in a Docker container or on an SSH host, while Pi
+Pi Exec runs Pi's tools in a Docker container or on an SSH host, while Pi
 itself stays local.
 
 ```bash
-pi install git:github.com/tshu-w/pi-env
+pi install git:github.com/tshu-w/pi-exec
 ```
 
 ## Usage
@@ -36,7 +36,7 @@ npm run typecheck
 npm test
 ```
 
-Tests use an `alpine:3` container and `ssh localhost` (`PI_ENV_TEST_SSH`
+Tests use an `alpine:3` container and `ssh localhost` (`PI_EXEC_TEST_SSH`
 sets another host), and skip what is unavailable.
 
 ## License

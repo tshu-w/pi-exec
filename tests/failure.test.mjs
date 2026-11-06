@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-env-failure-home-"));
+process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-exec-failure-home-"));
 const { pi, ai, createSession, callTool } = await import("./pi.mjs");
 
 const start = (cwd, flags, sessionManager) => createSession({ cwd, flags, sessionManager, route: () => ai.fauxAssistantMessage("ok"), tools: ["bash", "write"] });
@@ -17,8 +17,8 @@ async function assertBlocked(session, cwd) {
 }
 
 test("an unreachable --env blocks local execution, also in sessions that inherit it, until /env off", async () => {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-env-failure-"));
-	const session = await start(cwd, { env: "docker:pi-env-does-not-exist:/work" }, pi.SessionManager.create(cwd, join(cwd, "sessions")));
+	const cwd = mkdtempSync(join(tmpdir(), "pi-exec-failure-"));
+	const session = await start(cwd, { env: "docker:pi-exec-does-not-exist:/work" }, pi.SessionManager.create(cwd, join(cwd, "sessions")));
 	try {
 		await assertBlocked(session, cwd);
 

@@ -14,7 +14,7 @@ export const textOf = (content) => typeof content === "string"
 	? content
 	: content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
 
-/** Creates a Session in `cwd` with Pi Env, whose faux model answers every request with `route`. */
+/** Creates a Session in `cwd` with Pi Exec, whose faux model answers every request with `route`. */
 export async function createSession({ cwd, route, flags = {}, ...options }) {
 	const agentDir = process.env.PI_CODING_AGENT_DIR;
 	const faux = ai.fauxProvider({ provider: "faux", models: [{ id: "model" }], tokensPerSecond: 0 });
