@@ -41,6 +41,10 @@ test("a long command moves to the background, and its notification follows Pi's 
 		const quick = await callTool(session, "bash", { command: "echo $PI_SESSION_ID" });
 		assert.equal(textOf(quick.content), `${session.sessionManager.getSessionId()}\n`);
 
+		// A command leads its own session, so it cannot take Pi's terminal.
+		const leader = await callTool(session, "bash", { command: "ps -o stat= -p $(ps -o pgid= -p $$)" });
+		assert.match(textOf(leader.content), /s/);
+
 		const id = "parent/1";
 		const nested = session.getToolDefinition("bash").execute(id, { command: "true", background: true }, undefined, undefined, session.extensionRunner.createToolContext(id));
 		await assert.rejects(nested, /^Error: `background` is not available in nested tool calls\.$/);

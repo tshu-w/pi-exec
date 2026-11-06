@@ -4,8 +4,8 @@ import type { Target } from "./target.ts";
 const TERMINATION_GRACE_SECONDS = 0.25;
 
 /**
- * A command running detached in an environment (local without a target): its own process group,
- * with stdin from /dev/null and all output in `log`. It keeps running when the client that started
+ * A command running detached in an environment (local without a target): its own session and process group,
+ * without a controlling terminal, with stdin from /dev/null and all output in `log`. It keeps running when the client that started
  * or watches it goes away.
  */
 export type Detached = { pgid: number; log: string };
@@ -96,8 +96,8 @@ export function launch(target: Target | undefined, options: LaunchOptions): Prom
 		`cd ${shellQuote(options.cwd)} 2>/dev/null || { printf 'nocwd\\n' >&2; exit 1; }\n` +
 		exports +
 		shell +
-		// macOS has no setsid; perl starts the process group there.
-		`if command -v setsid >/dev/null 2>&1; then group=setsid; else group='perl -e setpgrp;exec@ARGV'; fi\n` +
+		// A new session detaches the command from Pi's terminal; macOS has no setsid, so perl starts it there.
+		`if command -v setsid >/dev/null 2>&1; then group=setsid; else group='perl -MPOSIX -e POSIX::setsid;exec@ARGV'; fi\n` +
 		`dir=\${TMPDIR:-/tmp}; base=$(mktemp "\${dir%/}/pi-bash-XXXXXX") && log=$base.log && mv "$base" "$log" || exit 1\n` +
 		`$group sh -c 'c=$1 l=$2 s=$3; shift 3; "$@" "$c" </dev/null >"$l" 2>&1; printf %s "$?" >"$s.tmp" && mv "$s.tmp" "$s"' ` +
 		`sh ${shellQuote(options.command)} "$log" "$base.exit" "$@" </dev/null >/dev/null 2>&1 &\n` +
