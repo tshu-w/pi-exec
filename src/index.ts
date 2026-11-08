@@ -120,6 +120,10 @@ export default function (pi: ExtensionAPI) {
 		{ customType: MESSAGE_TYPE, content: text, display: true, details },
 		{ deliverAs: "steer", triggerTurn: true },
 	), (record) => pi.appendEntry<JobRecord>(JOB_ENTRY_TYPE, record));
+	// A hosted Pi asks whether its session is busy before it exits when idle.
+	pi.events.on("session:busy", (query) => {
+		if (jobs.list().some((job) => job.status === "running")) (query as { busy: boolean }).busy = true;
+	});
 	let backgroundAfterSecs = DEFAULT_BACKGROUND_AFTER_SECS;
 	let shellPath: string | undefined;
 	let shellCommandPrefix: string | undefined;

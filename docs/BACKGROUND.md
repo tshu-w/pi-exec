@@ -104,3 +104,5 @@ Full output: <log>
 ```
 
 `Full output` appears while the log exists. Several commands are reported one after another in the same message, separated by blank lines.
+
+While a background command runs, Pi Exec answers the `session:busy` event (`pi.events.emit("session:busy", query)` with `query = { busy: false }`) by setting `query.busy` to `true`, so a hosted Pi does not exit when idle.

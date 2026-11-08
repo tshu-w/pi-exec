@@ -8,7 +8,8 @@ process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-exec-background
 writeFileSync(join(process.env.PI_CODING_AGENT_DIR, "settings.json"), JSON.stringify({ "pi-exec": { backgroundAfterSecs: 1 } }));
 const { pi, ai, textOf, createSession, callTool, notifications } = await import("./pi.mjs");
 
-const start = (cwd) => createSession({
+const start = (cwd, eventBus) => createSession({
+	eventBus,
 	cwd,
 	route: () => ai.fauxAssistantMessage("ok"),
 	sessionManager: pi.SessionManager.create(cwd, join(cwd, "sessions")),
@@ -59,12 +60,22 @@ test("a long command moves to the background, and its notification follows Pi's 
 
 test("leaving the session stops background commands, and the next start reports them once", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-exec-background-"));
-	const session = await start(cwd);
+	const eventBus = pi.createEventBus();
+	const busy = () => {
+		const query = { busy: false };
+		eventBus.emit("session:busy", query);
+		return query.busy;
+	};
+	const session = await start(cwd, eventBus);
+	assert.equal(busy(), false);
 	const pidFile = join(cwd, "pid");
 	const { details: { pgid, fullOutputPath } } = await callTool(session, "bash", { command: `echo $$ > ${pidFile}; exec sleep 300`, background: true });
 	for (let i = 0; i < 50 && !existsSync(pidFile); i++) await new Promise((resolve) => setTimeout(resolve, 100));
 	const pid = Number(readFileSync(pidFile, "utf8"));
+	// A running background command keeps a hosted Pi from exiting when idle.
+	assert.equal(busy(), true);
 	await session.extensionRunner.emit({ type: "session_shutdown" });
+	assert.equal(busy(), false);
 	const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
 	for (let i = 0; i < 50 && alive(); i++) await new Promise((resolve) => setTimeout(resolve, 100));
 	assert.equal(alive(), false);

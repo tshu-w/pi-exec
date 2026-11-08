@@ -15,14 +15,14 @@ export const textOf = (content) => typeof content === "string"
 	: content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
 
 /** Creates a Session in `cwd` with Pi Exec, whose faux model answers every request with `route`. */
-export async function createSession({ cwd, route, flags = {}, ...options }) {
+export async function createSession({ cwd, route, flags = {}, eventBus, ...options }) {
 	const agentDir = process.env.PI_CODING_AGENT_DIR;
 	const faux = ai.fauxProvider({ provider: "faux", models: [{ id: "model" }], tokensPerSecond: 0 });
 	faux.setResponses(Array.from({ length: 200 }, () => route));
 	const modelRuntime = await pi.ModelRuntime.create({ authPath: join(cwd, "auth.json"), modelsPath: null });
 	modelRuntime.registerNativeProvider(faux.provider);
 	const settingsManager = pi.SettingsManager.create(cwd, agentDir, { projectTrusted: true });
-	const resourceLoader = new pi.DefaultResourceLoader({ cwd, agentDir, settingsManager, noExtensions: true, additionalExtensionPaths: [EXTENSION] });
+	const resourceLoader = new pi.DefaultResourceLoader({ cwd, agentDir, settingsManager, noExtensions: true, additionalExtensionPaths: [EXTENSION], eventBus });
 	await resourceLoader.reload();
 	for (const [name, value] of Object.entries(flags)) resourceLoader.getExtensions().runtime.flagValues.set(name, value);
 	const { session } = await pi.createAgentSession({ cwd, agentDir, settingsManager, resourceLoader, modelRuntime, model: faux.getModel(), ...options });
