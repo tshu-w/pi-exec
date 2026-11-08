@@ -105,6 +105,9 @@ export type BashResultDetails = {
 	fullOutputPath?: string;
 };
 
+/** A background command's start, or the report of its end when a session ended before it did. */
+export type JobRecord = { pgid: number; log: string } & ({ event: "started"; command: string; environment?: string } | { event: "ended" });
+
 /** The first line of a command, marked when it has more. */
 export function titleOf(command: string): string {
 	const [first = "", ...rest] = command.split("\n");
@@ -173,7 +176,7 @@ export class Jobs {
 	/** Set from the end of the session: no more notifications. */
 	private closing = false;
 
-	constructor(private notify: (text: string, details: BashResultDetails) => void) {}
+	constructor(private notify: (text: string, details: BashResultDetails) => void, private record: (record: JobRecord) => void) {}
 
 	/** Starts a command; `timeout` in seconds stops it. */
 	start(target: Target | undefined, options: Omit<LaunchOptions, "onStart" | "onData" | "signal">, timeout?: number): Job {
@@ -249,6 +252,8 @@ export class Jobs {
 		job.onData = undefined;
 		job.background = true;
 		this.background.push(job);
+		const { pgid, log } = job.detached!;
+		this.record({ event: "started", pgid, log, command: job.command, ...(job.target && { environment: formatTarget(job.target) }) });
 		this.changed();
 	}
 

@@ -21,10 +21,10 @@ import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { createUserBashOperations, executeBash } from "./bash.ts";
 import { loadContextFiles } from "./context.ts";
-import { exec, shellQuote } from "./exec.ts";
+import { exec, run, shellQuote } from "./exec.ts";
 import { createEditOperations, createFindOperations, createLsOperations, createReadOperations, createWriteOperations } from "./files.ts";
 import { grep } from "./grep.ts";
-import { type BashResultDetails, Jobs, MESSAGE_TYPE } from "./jobs.ts";
+import { type BashResultDetails, type JobRecord, Jobs, MESSAGE_TYPE, titleOf } from "./jobs.ts";
 import { registerJobsUi, renderBashResult } from "./ui.ts";
 import {
 	type Environment,
@@ -38,13 +38,15 @@ import {
 } from "./target.ts";
 
 const ENTRY_TYPE = "env-state";
+const JOB_ENTRY_TYPE = "bash-job";
+const LOST_RESULT = "The session ended before this command did.";
 const SETTINGS_KEY = "pi-exec";
 const DEFAULT_BACKGROUND_AFTER_SECS = 120;
 const ENV_TOOLS = ["read", "write", "edit", "bash", "grep", "find", "ls"];
 
 type PersistedState = { environment: string; home: string } | { environment: null; error?: string };
 
-type SessionEntry = { type: string; customType?: string; data?: unknown };
+type SessionEntry = { type: string; customType?: string; data?: unknown; details?: unknown };
 
 /** Starts an environment from its spec: the path must exist; without one, the user's home. */
 async function resolveEnvironment(spec: string): Promise<Environment> {
@@ -117,7 +119,7 @@ export default function (pi: ExtensionAPI) {
 	const jobs = new Jobs((text, details) => pi.sendMessage<BashResultDetails>(
 		{ customType: MESSAGE_TYPE, content: text, display: true, details },
 		{ deliverAs: "steer", triggerTurn: true },
-	));
+	), (record) => pi.appendEntry<JobRecord>(JOB_ENTRY_TYPE, record));
 	let backgroundAfterSecs = DEFAULT_BACKGROUND_AFTER_SECS;
 	let shellPath: string | undefined;
 	let shellCommandPrefix: string | undefined;
@@ -170,6 +172,33 @@ export default function (pi: ExtensionAPI) {
 	const restore = (ctx: ExtensionContext) => {
 		const saved = findPersisted(ctx.sessionManager.getBranch() as SessionEntry[]);
 		setActive(saved.env, ctx, saved.error);
+	};
+
+	/** Reports the background commands of the branch without a notification in the session, in one notification without a turn. */
+	const reportLost = async (ctx: ExtensionContext) => {
+		const lost = new Map<string, JobRecord & { event: "started" }>();
+		for (const entry of ctx.sessionManager.getBranch() as SessionEntry[]) {
+			if (entry.type === "custom_message" && entry.customType === MESSAGE_TYPE && entry.details) {
+				const { pgid, command } = entry.details as BashResultDetails;
+				for (const [log, record] of lost) {
+					if (record.pgid !== pgid || record.command !== command) continue;
+					lost.delete(log);
+					break;
+				}
+			}
+			if (entry.type !== "custom" || entry.customType !== JOB_ENTRY_TYPE) continue;
+			const record = entry.data as JobRecord;
+			if (record.event === "started") lost.set(record.log, record);
+			else lost.delete(record.log);
+		}
+		if (lost.size === 0) return;
+		const results = await Promise.all([...lost.values()].map(async ({ pgid, log, command, environment }) => {
+			const target = environment ? parseEnvironment(environment).target : undefined;
+			const kept = await run(target, `test -f ${shellQuote(log)}`, { timeoutMs: 10_000 }).then((code) => code === 0, () => false);
+			return `<${MESSAGE_TYPE} pgid="${pgid}" status="stopped">\nCommand: ${titleOf(command)}\n${LOST_RESULT}${kept ? `\nFull output: ${log}` : ""}\n</${MESSAGE_TYPE}>`;
+		}));
+		pi.sendMessage({ customType: MESSAGE_TYPE, content: results.join("\n\n"), display: true }, { deliverAs: "steer", triggerTurn: false });
+		for (const { pgid, log } of lost.values()) pi.appendEntry<JobRecord>(JOB_ENTRY_TYPE, { event: "ended", pgid, log });
 	};
 
 	const base = {
@@ -339,6 +368,7 @@ export default function (pi: ExtensionAPI) {
 		backgroundAfterSecs = valid ? seconds : DEFAULT_BACKGROUND_AFTER_SECS;
 		jobs.open();
 		ui.start(ctx);
+		await reportLost(ctx);
 		const flag = pi.getFlag("env");
 		const persisted = findPersisted(ctx.sessionManager.getBranch() as SessionEntry[]);
 		if (typeof flag === "string" && flag.trim() && (event.reason === "startup" || event.reason === "new" || !persisted.found)) {

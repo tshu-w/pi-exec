@@ -92,3 +92,15 @@ While background commands run, a line shows above the editor:
 ## 6. Environment switch and session end
 
 `/env` stops the commands in the environment left; a foreground one ends with `Command stopped because the environment changed`. Leaving the session stops all background commands without notifications; commands in an unreachable environment keep running.
+
+The session records each command moved to the background. When the session starts again, the commands of its branch without a notification in the session, stopped by a session end or left by a Pi process that exited, are reported in one notification that does not start a turn, and are then recorded as reported:
+
+```
+<bash-result pgid="<pgid>" status="stopped">
+Command: <command>
+The session ended before this command did.
+Full output: <log>
+</bash-result>
+```
+
+`Full output` appears while the log exists. Several commands are reported one after another in the same message, separated by blank lines.
