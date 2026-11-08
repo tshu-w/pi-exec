@@ -3,13 +3,28 @@ import { type Detached, type Ended, launch, type LaunchOptions, removeLog, stop,
 import { formatTarget, type Target } from "./target.ts";
 
 export const MESSAGE_TYPE = "bash-result";
+/** The first wait before watching a command again after its connection failed; it doubles up to `RECONNECT_MAX_MS`. */
 const RECONNECT_MS = 2000;
+const RECONNECT_MAX_MS = 60_000;
+/** How long an environment may stay unreachable before its command is given up. */
+const LOST_AFTER_MS = 5 * 60_000;
 /** How long a stopped command's watcher may take to see it end. */
 const STOP_WAIT_MS = 2000;
 /** How long a command stopped while starting may still start, and then be stopped. */
 const START_WAIT_MS = 15_000;
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms).unref());
+
+/** Waits `ms`, or until `signal` aborts. */
+const pause = (ms: number, signal: AbortSignal) => new Promise<void>((resolve) => {
+	const done = () => {
+		clearTimeout(timer);
+		signal.removeEventListener("abort", done);
+		resolve();
+	};
+	const timer = setTimeout(done, ms).unref();
+	signal.addEventListener("abort", done, { once: true });
+});
 
 /**
  * The tail of a command's output and its totals, kept and truncated as Pi's bash tool keeps its
@@ -278,20 +293,37 @@ export class Jobs {
 		setTimeout(() => job.client.abort(), STOP_WAIT_MS).unref();
 	}
 
-	/** Watches a command again after its connection failed, until it ends. */
+	/** Watches a command again after its connection failed, until it ends or its environment stays unreachable for `LOST_AFTER_MS`. */
 	private async reattach(job: Job, onData: (data: Buffer) => void): Promise<Ended> {
+		let wait = RECONNECT_MS;
+		let lostAt = Date.now();
 		for (;;) {
 			if (job.reason || job.client.signal.aborted) return { exitCode: null };
-			await delay(RECONNECT_MS);
+			lostAt = Math.min(lostAt, Date.now());
+			const deadline = lostAt + LOST_AFTER_MS;
+			if (Date.now() >= deadline) return { exitCode: null, lost: true };
+			await pause(Math.min(wait, deadline - Date.now()), job.client.signal);
+			wait = Math.min(wait * 2, RECONNECT_MAX_MS);
+			if (job.reason || job.client.signal.aborted || Date.now() >= deadline) continue;
+			// An attempt that has not reached the environment by the deadline is given up.
+			const attempt = new AbortController();
+			const timer = setTimeout(() => attempt.abort(), deadline - Date.now()).unref();
+			const onConnect = () => {
+				clearTimeout(timer);
+				wait = RECONNECT_MS;
+				lostAt = Infinity;
+			};
 			try {
-				return await watch(job.target, job.detached!, job.offset, { signal: job.client.signal, onData });
+				return await watch(job.target, job.detached!, job.offset, { signal: AbortSignal.any([job.client.signal, attempt.signal]), onData, onConnect });
 			} catch {
 				// Retries while the command may still run.
+			} finally {
+				clearTimeout(timer);
 			}
 		}
 	}
 
-	private finish(job: Job, { exitCode }: Ended): void {
+	private finish(job: Job, { exitCode, lost }: Ended): void {
 		clearTimeout(job.timer);
 		this.running.delete(job);
 		job.tail.finish();
@@ -306,6 +338,9 @@ export class Jobs {
 		} else if (job.reason) {
 			job.status = "stopped";
 			job.ending = ENDINGS[job.reason];
+		} else if (lost) {
+			job.status = "failed";
+			job.ending = "Command lost because the environment became unreachable";
 		} else if (exitCode === null) {
 			job.status = "failed";
 			job.ending = "Command terminated without an exit code";

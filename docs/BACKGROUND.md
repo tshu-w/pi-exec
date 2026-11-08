@@ -69,7 +69,7 @@ Command exited with code 1
 `status` and the last line:
 
 - `completed`: none.
-- `failed`: `Command exited with code N`, `Command timed out after N seconds`, or `Command terminated without an exit code`.
+- `failed`: `Command exited with code N`, `Command timed out after N seconds`, `Command terminated without an exit code`, or `Command lost because the environment became unreachable`.
 - `stopped`: `Command aborted` (stopped in `/jobs`) or `Command stopped because the environment changed` (§6).
 
 Details: `{ pgid, command, status, seconds }`, plus `truncation` and `fullOutputPath` when the output was truncated.

@@ -24,8 +24,8 @@ export type LaunchOptions = {
 	onData: (data: Buffer) => void;
 };
 
-/** How a watched command ended: its exit code, or null when it ended without one. */
-export type Ended = { exitCode: number | null };
+/** How a watched command ended: its exit code, or null when it ended without one or its environment stayed unreachable. */
+export type Ended = { exitCode: number | null; lost?: true };
 
 const statusPath = (log: string) => log.replace(/\.log$/, ".exit");
 
@@ -33,22 +33,22 @@ const statusPath = (log: string) => log.replace(/\.log$/, ".exit");
  * Streams `$log` from byte `$off` until the command ends, then reports its exit status file
  * `$status`. The command ends when the file exists, or when the group's first process, which writes
  * it, is gone or a zombie; processes the command left running do not keep it going. Short commands
- * are checked more often at first.
+ * are checked more often at first, and quiet ones less often, down to once a second.
  */
 const WATCH =
-	`n=0\n` +
+	`n=0 d=100\n` +
 	`while :; do\n` +
 	`  if [ -f "$status" ] || ! kill -0 "$pgid" 2>/dev/null || [ "$(cut -d' ' -f3 /proc/$pgid/stat 2>/dev/null)" = Z ]; then end=1; else end=; fi\n` +
 	`  size=$(wc -c <"$log" 2>/dev/null) || size=$off\n` +
-	`  if [ $((size)) -gt "$off" ]; then tail -c +$((off + 1)) "$log" | head -c $((size - off)); off=$((size)); fi\n` +
+	`  if [ $((size)) -gt "$off" ]; then tail -c +$((off + 1)) "$log" | head -c $((size - off)); off=$((size)); d=100; fi\n` +
 	`  [ -n "$end" ] && break\n` +
-	`  if [ "$n" -lt 20 ]; then n=$((n + 1)); sleep 0.01; else sleep 0.1; fi\n` +
+	`  if [ "$n" -lt 20 ]; then n=$((n + 1)); sleep 0.01; else sleep $((d / 1000)).$((d % 1000 / 100)); d=$((d * 2 > 1000 ? 1000 : d * 2)); fi\n` +
 	`done\n` +
 	`code=$(cat "$status" 2>/dev/null)\n` +
 	`printf 'end %s\\n' "$code" >&2\n`;
 
 function watchScript({ pgid, log }: Detached, offset: number): string {
-	return `pgid=${pgid} log=${shellQuote(log)} status=${shellQuote(statusPath(log))} off=${offset}\n${WATCH}`;
+	return `printf 'watch\\n' >&2\npgid=${pgid} log=${shellQuote(log)} status=${shellQuote(statusPath(log))} off=${offset}\n${WATCH}`;
 }
 
 /**
@@ -56,15 +56,20 @@ function watchScript({ pgid, log }: Detached, offset: number): string {
  * first. The exit status file is removed once its status is received, so a watcher that loses its
  * connection leaves it for the next one.
  */
-async function follow(target: Target | undefined, script: string, options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal; onData: (data: Buffer) => void; onStart?: (detached: Detached) => void }, watched?: Detached): Promise<Ended> {
+async function follow(target: Target | undefined, script: string, options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal; onData: (data: Buffer) => void; onStart?: (detached: Detached) => void; onConnect?: () => void }, watched?: Detached): Promise<Ended> {
 	let stderr = "";
 	let started = watched;
+	let connected = false;
 	const code = await run(target, script, {
 		env: options.env,
 		signal: options.signal,
 		onStdout: options.onData,
 		onStderr: (data) => {
 			stderr += data.toString();
+			if (!connected && /^watch$/m.test(stderr)) {
+				connected = true;
+				options.onConnect?.();
+			}
 			const match = !started && stderr.match(/^start (\d+) (.+)\n/m);
 			if (match) {
 				started = { pgid: Number(match[1]), log: match[2]! };
@@ -106,8 +111,8 @@ export function launch(target: Target | undefined, options: LaunchOptions): Prom
 	return follow(target, script, options);
 }
 
-/** Streams a started command's output from byte `offset` until it ends; fails as `launch` does. */
-export function watch(target: Target | undefined, detached: Detached, offset: number, options: { signal?: AbortSignal; onData: (data: Buffer) => void }): Promise<Ended> {
+/** Streams a started command's output from byte `offset` until it ends; `onConnect` runs once it reaches the environment. Fails as `launch` does. */
+export function watch(target: Target | undefined, detached: Detached, offset: number, options: { signal?: AbortSignal; onData: (data: Buffer) => void; onConnect?: () => void }): Promise<Ended> {
 	return follow(target, watchScript(detached, offset), options, detached);
 }
 
