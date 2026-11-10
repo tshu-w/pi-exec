@@ -329,15 +329,9 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (spec === "off") {
 				if (!active && !failure) return;
-				const tools = toolList();
 				setActive(null, ctx);
 				persist(ctx);
 				notify(ctx, "Execution environment disabled.");
-				pi.sendMessage({
-					customType: "env-state-change",
-					content: `Execution environment disabled. ${tools} now execute locally.`,
-					display: false,
-				}, { triggerTurn: false });
 				return;
 			}
 			try {
@@ -348,11 +342,6 @@ export default function (pi: ExtensionAPI) {
 			}
 			persist(ctx);
 			announceEnabled(ctx);
-			pi.sendMessage({
-				customType: "env-state-change",
-				content: `Execution environment enabled: ${formatEnvironment(active!)}\n${toolList()} now execute in this environment.\nTo return them to local execution, run /env off.`,
-				display: false,
-			}, { triggerTurn: false });
 		},
 	});
 
@@ -405,7 +394,7 @@ export default function (pi: ExtensionAPI) {
 		if (!env) return;
 		const options = event.systemPromptOptions;
 		options.cwd = env.cwd;
-		options.sections.env = `Execution environment: ${formatTarget(env.target)}. ${toolList()} execute there; other tools run locally.`;
+		options.sections.env = `Execution environment: ${formatTarget(env.target)}. ${toolList()} execute there; other tools run locally.\n/env off switches them back to local execution.`;
 		// Keep the global context file; project ones come from the environment.
 		const agentDir = path.resolve(getAgentDir());
 		const global = options.contextFiles.filter((file) => path.dirname(file.path) === agentDir);

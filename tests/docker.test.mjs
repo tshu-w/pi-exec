@@ -117,7 +117,7 @@ test("the system prompt uses the environment, and resuming restores it", { skip 
 	await session.prompt(`/env docker:${container}:/work`);
 	await session.prompt("hi");
 	const prompt = prompts.at(-1);
-	assert.match(prompt, /Execution environment: docker:pi-exec-test-\d+\. read, write, edit, bash, grep, find, ls, and user ! commands execute there; other tools run locally\./);
+	assert.match(prompt, /Execution environment: docker:pi-exec-test-\d+\. read, write, edit, bash, grep, find, ls, and user ! commands execute there; other tools run locally\.\n\/env off switches them back to local execution\./);
 	assert.match(prompt, /Project rules/);
 	assert.match(prompt, /\/work/);
 	const file = session.sessionManager.getSessionFile();
