@@ -230,7 +230,7 @@ class JobViewer implements Component, Focusable {
 	}
 }
 
-/** A filterable list in place of the editor, like pi-agents' `/tasks`. */
+/** A filterable list in place of the editor. */
 class ListSelector extends Container implements Focusable {
 	private readonly input = new Input();
 	private readonly listContainer = new Container();
@@ -319,7 +319,7 @@ export function registerJobsUi(pi: ExtensionAPI, jobs: Jobs, definition: object)
 		handler: async (_args, current) => {
 			const list = jobs.list();
 			if (list.length === 0) {
-				current.ui.notify("No jobs.", "info");
+				current.ui.notify("No background commands.", "info");
 				return;
 			}
 			const items: SelectItem[] = list.map((job, index) => ({
@@ -328,7 +328,7 @@ export function registerJobsUi(pi: ExtensionAPI, jobs: Jobs, definition: object)
 				description: `${job.status}  ${formatDuration((job.endedAt ?? Date.now()) - job.startedAt)}`,
 			}));
 			const index = await current.ui.custom<string | undefined>((_tui, theme, keys, done) =>
-				new ListSelector("Jobs", items, theme, keys, (value) => done(value), () => done(undefined)));
+				new ListSelector("Background commands", items, theme, keys, (value) => done(value), () => done(undefined)));
 			const job = index === undefined ? undefined : list[Number(index)];
 			if (!job) return;
 			await current.ui.custom<void>(

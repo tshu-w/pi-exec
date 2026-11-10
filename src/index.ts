@@ -120,7 +120,7 @@ export default function (pi: ExtensionAPI) {
 		{ customType: MESSAGE_TYPE, content: text, display: true, details },
 		{ deliverAs: "steer", triggerTurn: true },
 	), (record) => pi.appendEntry<JobRecord>(JOB_ENTRY_TYPE, record));
-	// A hosted Pi asks whether its session is busy before it exits when idle.
+	// Answered so that an idle session is not shut down while commands run.
 	pi.events.on("session:busy", (query) => {
 		if (jobs.list().some((job) => job.status === "running")) (query as { busy: boolean }).busy = true;
 	});
@@ -136,10 +136,6 @@ export default function (pi: ExtensionAPI) {
 		return active;
 	};
 
-	const requireActive = () => {
-		if (!active) throw new Error("No execution environment is active");
-		return active;
-	};
 	const toolList = () => formatList([...ENV_TOOLS.filter((name) => pi.getActiveTools().includes(name)), "user ! commands"]);
 
 	const updateStatus = (ctx: ExtensionContext) => {
@@ -169,8 +165,7 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	const announceEnabled = (ctx: ExtensionContext) => {
-		const env = requireActive();
-		notify(ctx, `Execution environment enabled: ${formatEnvironment(env)} (disable: /env off)`);
+		notify(ctx, `Execution environment enabled: ${formatEnvironment(active!)} (disable: /env off)`);
 	};
 
 	const restore = (ctx: ExtensionContext) => {
@@ -240,7 +235,6 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerTool({
 		...base.edit,
-		renderShell: "self",
 		async execute(id, params, signal, onUpdate, ctx) {
 			const env = current();
 			if (!env) return createEditToolDefinition(ctx.cwd).execute(id, params, signal, onUpdate, ctx);
@@ -330,7 +324,7 @@ export default function (pi: ExtensionAPI) {
 			if (!spec) {
 				notify(ctx, active
 					? `Execution environment: ${formatEnvironment(active)} (disable: /env off)`
-					: failure ?? "Execution environment: off. Enable with /env docker:container:/path or /env ssh:host:/path.");
+					: failure ?? `Execution environment: off. Enable with /env ${USAGE}.`);
 				return;
 			}
 			if (spec === "off") {
@@ -356,7 +350,7 @@ export default function (pi: ExtensionAPI) {
 			announceEnabled(ctx);
 			pi.sendMessage({
 				customType: "env-state-change",
-				content: `Execution environment enabled: ${formatEnvironment(requireActive())}\n${toolList()} now execute in this environment.\nTo return them to local execution, run /env off.`,
+				content: `Execution environment enabled: ${formatEnvironment(active!)}\n${toolList()} now execute in this environment.\nTo return them to local execution, run /env off.`,
 				display: false,
 			}, { triggerTurn: false });
 		},
@@ -368,7 +362,6 @@ export default function (pi: ExtensionAPI) {
 		shellCommandPrefix = settings.getShellCommandPrefix();
 		const seconds = (settings.getSettings() as Record<string, any>)[SETTINGS_KEY]?.backgroundAfterSecs;
 		const valid = typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0;
-		if (seconds !== undefined && !valid) console.warn(`[pi-exec] invalid backgroundAfterSecs ${JSON.stringify(seconds)}; using ${DEFAULT_BACKGROUND_AFTER_SECS}`);
 		backgroundAfterSecs = valid ? seconds : DEFAULT_BACKGROUND_AFTER_SECS;
 		jobs.open();
 		ui.start(ctx);

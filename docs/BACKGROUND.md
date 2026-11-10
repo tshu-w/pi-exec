@@ -87,7 +87,7 @@ While background commands run, a line shows above the editor:
 2 commands running · /jobs to view
 ```
 
-`/jobs` opens a filterable list titled `Jobs` of the session's background commands, ended ones included, with rows `$ <command>  <state>  <time>`. Enter shows a command as its tool call would, live from the last 2000 lines or 50KB of its log. Esc stops it without confirmation (`Command aborted`); Ctrl+C goes back.
+`/jobs` opens a filterable list titled `Background commands` of the session's background commands, ended ones included, with rows `$ <command>  <state>  <time>`. Enter shows a command as its tool call would, live from the last 2000 lines or 50KB of its log. Esc stops it without confirmation (`Command aborted`); Ctrl+C goes back.
 
 ## 6. Environment switch and session end
 
@@ -105,4 +105,4 @@ Full output: <log>
 
 `Full output` appears while the log exists. Several commands are reported one after another in the same message, separated by blank lines.
 
-While a background command runs, Pi Exec answers the `session:busy` event (`pi.events.emit("session:busy", query)` with `query = { busy: false }`) by setting `query.busy` to `true`, so a hosted Pi does not exit when idle.
+While a background command runs, Pi Exec answers the `session:busy` event (`pi.events.emit("session:busy", query)` with `query = { busy: false }`) by setting `query.busy` to `true`, so an idle session is not shut down.
