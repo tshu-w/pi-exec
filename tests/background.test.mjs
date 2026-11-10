@@ -72,7 +72,7 @@ test("leaving the session stops background commands, and the next start reports 
 	const { details: { pgid, fullOutputPath } } = await callTool(session, "bash", { command: `echo $$ > ${pidFile}; exec sleep 300`, background: true });
 	for (let i = 0; i < 50 && !existsSync(pidFile); i++) await new Promise((resolve) => setTimeout(resolve, 100));
 	const pid = Number(readFileSync(pidFile, "utf8"));
-	// A running background command keeps a hosted Pi from exiting when idle.
+	// A running background command keeps an idle session from being shut down.
 	assert.equal(busy(), true);
 	await session.extensionRunner.emit({ type: "session_shutdown" });
 	assert.equal(busy(), false);
