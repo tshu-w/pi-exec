@@ -130,6 +130,19 @@ export default function (pi: ExtensionAPI) {
 	let active: Environment | null = null;
 	// Set when a requested environment failed; tools must not fall back to local execution.
 	let failure: string | undefined;
+	let sessionId: string | undefined;
+	// An Agent that pi-agents creates runs in this environment, and its `cwd` is a path there.
+	pi.events.on("agent:spawn", (data) => {
+		const child = data as { spawnerId: string; disown: boolean; cwd?: string; entries: { customType: string; data: unknown }[]; error?: string };
+		if (child.spawnerId !== sessionId || (!active && !failure)) return;
+		if (child.disown) {
+			if (active) child.error = "An Agent in an execution environment cannot disown an Agent.";
+			return;
+		}
+		const env = active && child.cwd !== undefined ? { ...active, cwd: path.posix.resolve(active.cwd, expandHome(child.cwd, active.home)) } : active;
+		child.entries.push({ customType: ENTRY_TYPE, data: serialize(env, failure) });
+		if (active) child.cwd = undefined;
+	});
 
 	const current = () => {
 		if (failure) throw new Error(failure);
@@ -346,6 +359,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (event, ctx) => {
+		sessionId = ctx.sessionManager.getSessionId();
 		const settings = SettingsManager.create(ctx.cwd, getAgentDir());
 		shellPath = settings.getShellPath();
 		shellCommandPrefix = settings.getShellCommandPrefix();
