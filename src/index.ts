@@ -22,7 +22,7 @@ import { Type } from "typebox";
 import { createUserBashOperations, executeBash } from "./bash.ts";
 import { loadContextFiles } from "./context.ts";
 import { exec, run, shellQuote } from "./exec.ts";
-import { createEditOperations, createFindOperations, createLsOperations, createReadOperations, createWriteOperations } from "./files.ts";
+import { createEditOperations, createFindOperations, createLsOperations, createReadOperations, createWriteOperations, localReadOperations } from "./files.ts";
 import { grep } from "./grep.ts";
 import { type BashResultDetails, type JobRecord, Jobs, MESSAGE_TYPE, titleOf } from "./jobs.ts";
 import { registerJobsUi, renderBashResult } from "./ui.ts";
@@ -230,7 +230,7 @@ export default function (pi: ExtensionAPI) {
 		...base.read,
 		async execute(id, params, signal, onUpdate, ctx) {
 			const env = current();
-			if (!env) return createReadToolDefinition(ctx.cwd).execute(id, params, signal, onUpdate, ctx);
+			if (!env) return createReadToolDefinition(ctx.cwd, { operations: localReadOperations }).execute(id, params, signal, onUpdate, ctx);
 			const tool = createReadToolDefinition(env.cwd, { operations: createReadOperations({ target: env.target, signal }) });
 			return tool.execute(id, withPath(params, env), signal, onUpdate, { ...ctx, cwd: env.cwd });
 		},
