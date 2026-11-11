@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -25,5 +25,28 @@ test("an Agent's Session inherits the environment, with cwd resolved there, and 
 		assert.deepEqual(child(false, "src"), { id: "child", spawnerId: session.sessionManager.getSessionId(), disown: false, cwd: "src", entries: [] });
 	} finally {
 		session.dispose();
+	}
+});
+
+test("an unavailable environment rejects disowned Agents until explicitly disabled", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-exec-agents-failure-"));
+	const sessionManager = pi.SessionManager.create(cwd, join(cwd, "sessions"));
+	const failure = { environment: null, error: "Execution environment is unavailable." };
+	sessionManager.appendCustomEntry("env-state", failure);
+	const eventBus = pi.createEventBus();
+	const session = await createSession({ cwd, eventBus, sessionManager, route: () => ai.fauxAssistantMessage("ok") });
+	try {
+		const child = (disown) => {
+			const event = { id: "child", spawnerId: session.sessionManager.getSessionId(), disown, entries: [] };
+			eventBus.emit("agent:spawn", event);
+			return event;
+		};
+		assert.deepEqual(child(false).entries, [{ customType: "env-state", data: failure }]);
+		assert.equal(child(true).error, "An Agent in an execution environment cannot disown an Agent.");
+		await session.prompt("/env off");
+		assert.equal(child(true).error, undefined);
+	} finally {
+		session.dispose();
+		rmSync(cwd, { recursive: true, force: true });
 	}
 });

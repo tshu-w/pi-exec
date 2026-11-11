@@ -136,7 +136,7 @@ export default function (pi: ExtensionAPI) {
 		const child = data as { spawnerId: string; disown: boolean; cwd?: string; entries: { customType: string; data: unknown }[]; error?: string };
 		if (child.spawnerId !== sessionId || (!active && !failure)) return;
 		if (child.disown) {
-			if (active) child.error = "An Agent in an execution environment cannot disown an Agent.";
+			child.error = "An Agent in an execution environment cannot disown an Agent.";
 			return;
 		}
 		const env = active && child.cwd !== undefined ? { ...active, cwd: path.posix.resolve(active.cwd, expandHome(child.cwd, active.home)) } : active;
