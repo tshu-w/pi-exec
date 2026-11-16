@@ -261,7 +261,7 @@ export default function (pi: ExtensionAPI) {
 		description: `${base.bash.description} When a background command ends, you receive a notification with the result.`,
 		promptGuidelines: [
 			...base.bash.promptGuidelines ?? [],
-			"Use `background=true` for servers, watchers, and other commands that do not exit on their own; do not poll a background command for its end.",
+			"Use `background=true` for servers, watchers, and other commands that do not exit on their own; to check whether one is ready or has failed, read its `Full output` file. Do not poll a background command for its end.",
 		],
 		parameters: Type.Object({
 			...base.bash.parameters.properties,
