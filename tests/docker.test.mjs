@@ -62,6 +62,9 @@ test("file tools work on environment files and keep permissions", { skip }, asyn
 	assert.deepEqual(textOf(found.content).split("\n").sort(), ["src/a.ts", "src/lib/b.ts"]);
 	const nested = await callTool(session, "find", { pattern: "src/**/*.ts" });
 	assert.deepEqual(textOf(nested.content).split("\n").sort(), ["src/a.ts", "src/lib/b.ts"]);
+	// A path pattern is relative to the search directory, as in Pi's find.
+	assert.equal(textOf((await callTool(session, "find", { pattern: "lib/*.ts" })).content), "No files found matching pattern");
+	assert.deepEqual(textOf((await callTool(session, "find", { pattern: "./src/*.ts" })).content).split("\n"), ["src/a.ts"]);
 
 	await assert.rejects(callTool(session, "grep", { pattern: "hello" }), /rg is not available in the execution environment\. Use bash to search\./);
 	if (spawnSync("docker", ["exec", container, "apk", "add", "-q", "ripgrep"], { stdio: "ignore", timeout: 60_000 }).status === 0) {

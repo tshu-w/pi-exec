@@ -92,7 +92,7 @@ function renderNotification(text: string, details: BashResultDetails, expanded: 
 		box.addChild(new Spacer(1));
 		if (expanded) box.addChild(new Text(styled, 0, 0));
 		else {
-			let cached: { width: number; lines: string[] } | undefined;
+			let cached: { width: number; lines: readonly string[] } | undefined;
 			box.addChild({
 				render(width) {
 					if (cached?.width === width) return cached.lines;

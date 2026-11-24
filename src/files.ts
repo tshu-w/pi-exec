@@ -1,14 +1,5 @@
-import { constants } from "node:fs";
-import { access as fsAccess, open, readFile as fsReadFile } from "node:fs/promises";
 import { posix } from "node:path";
-import {
-	detectSupportedImageMimeTypeFromFile,
-	type EditOperations,
-	type FindOperations,
-	type LsOperations,
-	type ReadOperations,
-	type WriteOperations,
-} from "@earendil-works/pi-coding-agent";
+import type { EditOperations, FindOperations, LsOperations, ReadOperations, WriteOperations } from "@earendil-works/pi-coding-agent";
 import { exec, run, shellQuote } from "./exec.ts";
 import type { Target } from "./target.ts";
 
@@ -32,29 +23,6 @@ async function access({ target, signal }: Ops, path: string, ...tests: string[])
 	if (code === 4) throw new Error(`EACCES: permission denied, access '${path}'`);
 	if (code !== 0) throw new Error(stderr.trim() || `${target.backend} exited with code ${code}`);
 }
-
-/**
- * Pi's local read operations. Temporary: in Pi 1.5.1, an abort between opening the file and reading it
- * makes the stream emit an AbortError with no listener, which crashes Pi. The listener here only stops
- * that; read errors still reject the read through the stream's iterator. Remove once Pi handles it.
- */
-export const localReadOperations: ReadOperations = {
-	readFile: (path) => fsReadFile(path),
-	access: (path) => fsAccess(path, constants.R_OK),
-	detectImageMimeType: detectSupportedImageMimeTypeFromFile,
-	async *createReadStream(path, { signal }) {
-		const handle = await open(path, "r");
-		try {
-			const stats = await handle.stat();
-			const end = stats.isFile() && stats.size > 0 ? stats.size - 1 : undefined;
-			const stream = handle.createReadStream({ end, signal, autoClose: false });
-			stream.on("error", () => {});
-			yield* stream;
-		} finally {
-			await handle.close();
-		}
-	},
-};
 
 export function createReadOperations({ target, signal }: Ops): ReadOperations {
 	// read detects the image type and then reads the same file: one transfer serves both.
@@ -182,9 +150,11 @@ export function createFindOperations({ target, signal }: Ops): FindOperations {
 	return {
 		exists: async (path) => (await exec(target, kindScript(path), { signal })).toString().trim() !== "",
 		glob: async (pattern, root, { limit }) => {
-			// Like fd: a pattern without a slash matches file names, one with a slash matches paths.
+			// As Pi's find: a pattern without a slash matches file names, and one with a slash paths, relative to the
+			// search directory unless absolute.
+			pattern = pattern.replace(/^(?:\.\/)+/, "");
 			const fullPath = pattern.includes("/");
-			const regex = globToRegExp(fullPath && !pattern.startsWith("/") && !pattern.startsWith("**/") ? `**/${pattern}` : pattern);
+			const regex = globToRegExp(pattern);
 			const matches = (file: string) => {
 				if (!fullPath) return regex.test(posix.basename(file));
 				return regex.test(pattern.startsWith("/") ? posix.join(root, file) : file);
