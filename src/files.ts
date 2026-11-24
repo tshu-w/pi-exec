@@ -151,13 +151,15 @@ export function createFindOperations({ target, signal }: Ops): FindOperations {
 		exists: async (path) => (await exec(target, kindScript(path), { signal })).toString().trim() !== "",
 		glob: async (pattern, root, { limit }) => {
 			// As Pi's find: a pattern without a slash matches file names, and one with a slash paths, relative to the
-			// search directory unless absolute.
+			// search directory unless absolute; an all-lowercase pattern ignores case.
 			pattern = pattern.replace(/^(?:\.\/)+/, "");
 			const fullPath = pattern.includes("/");
 			const regex = globToRegExp(pattern);
+			// fd folds only ASCII letters.
+			const fold = pattern === pattern.toLowerCase() ? (text: string) => text.replace(/[A-Z]/g, (letter) => letter.toLowerCase()) : (text: string) => text;
 			const matches = (file: string) => {
-				if (!fullPath) return regex.test(posix.basename(file));
-				return regex.test(pattern.startsWith("/") ? posix.join(root, file) : file);
+				if (!fullPath) return regex.test(fold(posix.basename(file)));
+				return regex.test(fold(pattern.startsWith("/") ? posix.join(root, file) : file));
 			};
 			// Inside a git work tree, list files that git does not ignore; elsewhere, all files.
 			const script =

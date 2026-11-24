@@ -65,6 +65,9 @@ test("file tools work on environment files and keep permissions", { skip }, asyn
 	// A path pattern is relative to the search directory, as in Pi's find.
 	assert.equal(textOf((await callTool(session, "find", { pattern: "lib/*.ts" })).content), "No files found matching pattern");
 	assert.deepEqual(textOf((await callTool(session, "find", { pattern: "./src/*.ts" })).content).split("\n"), ["src/a.ts"]);
+	// An all-lowercase pattern ignores case.
+	assert.equal(textOf((await callTool(session, "find", { pattern: "agents.md" })).content), "AGENTS.md");
+	assert.equal(textOf((await callTool(session, "find", { pattern: "Agents.md" })).content), "No files found matching pattern");
 
 	await assert.rejects(callTool(session, "grep", { pattern: "hello" }), /rg is not available in the execution environment\. Use bash to search\./);
 	if (spawnSync("docker", ["exec", container, "apk", "add", "-q", "ripgrep"], { stdio: "ignore", timeout: 60_000 }).status === 0) {
