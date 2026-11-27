@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import type { EditOperations, FindOperations, LsOperations, ReadOperations, WriteOperations } from "@earendil-works/pi-coding-agent";
 import { exec, run, shellQuote } from "./exec.ts";
 import type { Target } from "./target.ts";
@@ -171,13 +172,15 @@ export function createFindOperations({ target, signal }: Ops): FindOperations {
 			const stop = new AbortController();
 			const onAbort = () => stop.abort();
 			signal?.addEventListener("abort", onAbort, { once: true });
+			// stdout chunks may split a multi-byte UTF-8 character.
+			const decoder = new StringDecoder("utf8");
 			let rest = "";
 			let stderr = "";
 			try {
 				const code = await run(target, script, {
 					signal: stop.signal,
 					onStdout: (data) => {
-						const items = (rest + data.toString()).split("\0");
+						const items = (rest + decoder.write(data)).split("\0");
 						rest = items.pop()!;
 						for (const item of items) {
 							const file = item.replace(/^\.\//, "");
@@ -190,7 +193,7 @@ export function createFindOperations({ target, signal }: Ops): FindOperations {
 						stderr += data.toString();
 					},
 				});
-				rest = rest.replace(/^\.\//, "");
+				rest = (rest + decoder.end()).replace(/^\.\//, "");
 				if (rest && results.length < limit && matches(rest)) results.push(rest);
 				if (code !== 0) throw new Error(stderr.trim() || `${target.backend} exited with code ${code}`);
 			} catch (error) {
