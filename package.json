@@ -12,7 +12,7 @@
 	"repository": "github:tshu-w/pi-exec",
 	"type": "module",
 	"scripts": {
-		"test": "node --experimental-strip-types --test --test-timeout=60000 tests/*.test.mjs",
+		"test": "node --experimental-strip-types --test --test-timeout=60000 tests/agents.test.mjs tests/background.test.mjs tests/failure.test.mjs tests/find.test.mjs tests/pi-install.test.mjs tests/reconnect.test.mjs",
 		"test:docker": "PI_EXEC_TEST_DOCKER=1 node --test --test-timeout=60000 tests/docker.test.mjs",
 		"test:ssh": "PI_EXEC_TEST_SSH_ENABLED=1 node --test --test-timeout=60000 tests/ssh.test.mjs",
 		"typecheck": "node scripts/typecheck.mjs"

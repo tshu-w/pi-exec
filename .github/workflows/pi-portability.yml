@@ -1,0 +1,44 @@
+name: Pi 1.6 portability
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'package*.json'
+      - 'tsconfig.json'
+      - '.github/workflows/pi-portability.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-pi:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        installation: [local, global]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - name: Install project-local Pi
+        if: matrix.installation == 'local'
+        run: npm install --no-save --package-lock=false --legacy-peer-deps=false @earendil-works/pi-coding-agent@1.6.0 @earendil-works/pi-tui@1.6.0 @types/node@22
+      - name: Install global npm Pi in temporary prefix
+        if: matrix.installation == 'global'
+        run: |
+          npm install --global --prefix "$RUNNER_TEMP/pi-npm" @earendil-works/pi-coding-agent@1.6.0 @types/node@22
+          echo "$RUNNER_TEMP/pi-npm/bin" >> "$GITHUB_PATH"
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test without SSH or Docker
+        run: npm test
+        env:
+          PI_EXEC_TEST_SSH_ENABLED: '0'
+          PI_EXEC_TEST_DOCKER: '0'

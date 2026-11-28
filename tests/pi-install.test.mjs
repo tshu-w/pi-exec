@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { findPiPackage, piDependency, piCompilerOptions } from "../scripts/pi-install.mjs";
 
 const AGENT = "@earendil-works/pi-coding-agent";
@@ -74,4 +76,19 @@ test("missing Pi or dependency reports an actionable error without running the C
 	assert.throws(() => findPiPackage({ root, path: join(root, "bin") }), /Pi not found/);
 	const agent = pkg(join(root, "node_modules"), AGENT);
 	assert.throws(() => piDependency(AI, agent), /Cannot resolve @earendil-works\/pi-ai/);
+});
+
+test("integration files are inert without explicit opt-in", (t) => {
+	const root = fixture(t);
+	const marker = join(root, "contacted");
+	for (const command of ["ssh", "docker"]) {
+		const file = executable(join(root, command));
+		writeFileSync(file, `#!/bin/sh\n: > "${marker}"\nexit 1\n`);
+	}
+	const env = { ...process.env, PATH: root, PI_EXEC_TEST_SSH_ENABLED: "0", PI_EXEC_TEST_DOCKER: "0" };
+	const files = ["ssh.test.mjs", "docker.test.mjs"].map((name) => fileURLToPath(new URL(name, import.meta.url)));
+	const result = spawnSync(process.execPath, ["--test", ...files], { env, encoding: "utf8", timeout: 10000 });
+	assert.equal(result.status, 0, result.stdout + result.stderr);
+	assert.match(result.stdout, /# skipped 7/);
+	assert.equal(existsSync(marker), false);
 });
