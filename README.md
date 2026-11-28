@@ -50,8 +50,29 @@ npm run typecheck
 npm test
 ```
 
-Tests use an `alpine:3` container and `ssh localhost` (`PI_EXEC_TEST_SSH`
-sets another host), and skip what is unavailable.
+Use Node.js >= 22.19.0 for Pi 1.6. With a Homebrew or global npm Pi on PATH,
+`npm install` installs the development tooling. If Node declarations are not
+available in the Pi installation, install them locally with
+`npm install --no-save --package-lock=false @types/node@22`.
+
+For a project-local npm Pi instead:
+
+```bash
+npm install --no-save --package-lock=false --legacy-peer-deps=false @earendil-works/pi-coding-agent@1.6.0 @earendil-works/pi-tui@1.6.0 @types/node@22
+npm run typecheck
+npm test
+````
+
+Tests and type checking prefer the project-local Pi and otherwise discover Pi
+from its executable on PATH (npm or Homebrew). The typecheck script resolves
+Pi's declarations and Node types from the installation without machine-specific
+paths in tsconfig.json. The default tests use local commands and simulated
+remote failures; real Docker and SSH tests are opt-in:
+
+```bash
+npm run test:docker  # requires an available alpine:3 image (PI_EXEC_TEST_IMAGE overrides)
+npm run test:ssh     # connects to localhost (PI_EXEC_TEST_SSH overrides)
+```
 
 ## License
 

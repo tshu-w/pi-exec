@@ -1,14 +1,12 @@
-import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { findPiPackage, piDependency } from "../scripts/pi-install.mjs";
 
-const prefix = dirname(dirname(realpathSync(execFileSync("which", ["pi"], { encoding: "utf8" }).trim())));
-const PI_PACKAGE = join(prefix, "libexec/lib/node_modules/@earendil-works/pi-coding-agent");
+const PI_PACKAGE = findPiPackage();
 export const EXTENSION = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 
-export const pi = await import(join(PI_PACKAGE, "dist/index.js"));
-export const ai = await import(join(PI_PACKAGE, "node_modules/@earendil-works/pi-ai/dist/index.js"));
+export const pi = await import(pathToFileURL(join(PI_PACKAGE, "dist/index.js")).href);
+export const ai = await import(pathToFileURL(join(piDependency("@earendil-works/pi-ai", PI_PACKAGE), "dist/index.js")).href);
 
 export const textOf = (content) => typeof content === "string"
 	? content

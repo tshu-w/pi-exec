@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 
 process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-exec-failure-home-"));
+// Simulate a missing container without contacting a Docker daemon.
+const bin = mkdtempSync(join(tmpdir(), "pi-exec-failure-bin-"));
+writeFileSync(join(bin, "docker"), "#!/bin/sh\necho 'No such container' >&2\nexit 1\n", { mode: 0o755 });
+process.env.PATH = `${bin}:${process.env.PATH}`;
+after(() => rmSync(bin, { recursive: true, force: true }));
 const { pi, ai, createSession, callTool } = await import("./pi.mjs");
 
 const start = (cwd, flags, sessionManager) => createSession({ cwd, flags, sessionManager, route: () => ai.fauxAssistantMessage("ok"), tools: ["bash", "write"] });

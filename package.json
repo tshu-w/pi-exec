@@ -2,16 +2,25 @@
 	"name": "pi-exec",
 	"version": "0.1.0",
 	"description": "Run Pi's tools in a Docker container or on an SSH host, and long commands in the background.",
-	"keywords": ["pi-package", "pi-extension", "docker", "ssh"],
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"docker",
+		"ssh"
+	],
 	"license": "AGPL-3.0-only",
 	"repository": "github:tshu-w/pi-exec",
 	"type": "module",
 	"scripts": {
-		"test": "node --test --test-timeout=60000 tests/",
-		"typecheck": "tsc -p tsconfig.json"
+		"test": "node --experimental-strip-types --test --test-timeout=60000 tests/*.test.mjs",
+		"test:docker": "PI_EXEC_TEST_DOCKER=1 node --test --test-timeout=60000 tests/docker.test.mjs",
+		"test:ssh": "PI_EXEC_TEST_SSH_ENABLED=1 node --test --test-timeout=60000 tests/ssh.test.mjs",
+		"typecheck": "node scripts/typecheck.mjs"
 	},
 	"pi": {
-		"extensions": ["./src/index.ts"]
+		"extensions": [
+			"./src/index.ts"
+		]
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",

@@ -5,11 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 
-process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-exec-home-"));
-const { pi, ai, textOf, createSession, callTool, notifications } = await import("./pi.mjs");
+const enabled = process.env.PI_EXEC_TEST_DOCKER === "1";
+if (enabled) process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-exec-home-"));
+const { pi, ai, textOf, createSession, callTool, notifications } = enabled ? await import("./pi.mjs") : {};
 
 const IMAGE = process.env.PI_EXEC_TEST_IMAGE ?? "alpine:3";
-const dockerReady = spawnSync("docker", ["image", "inspect", IMAGE], { stdio: "ignore" }).status === 0;
+const dockerReady = enabled && spawnSync("docker", ["image", "inspect", IMAGE], { stdio: "ignore" }).status === 0;
 const container = `pi-exec-test-${process.pid}`;
 const sh = (script) => execFileSync("docker", ["exec", container, "sh", "-c", script], { encoding: "utf8" });
 const alive = (pid) => spawnSync("docker", ["exec", container, "kill", "-0", pid]).status === 0;
@@ -38,7 +39,7 @@ async function startSession(options = {}) {
 	return { cwd, session, prompts };
 }
 
-const skip = !dockerReady && `${IMAGE} is not available`;
+const skip = !enabled ? "run npm run test:docker to enable" : !dockerReady && `${IMAGE} is not available`;
 
 test("file tools work on environment files and keep permissions", { skip }, async () => {
 	const { cwd, session } = await startSession();

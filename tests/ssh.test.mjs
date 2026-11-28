@@ -5,12 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 
-process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-exec-home-"));
-const { pi, ai, textOf, createSession, callTool, notifications } = await import("./pi.mjs");
+const enabled = process.env.PI_EXEC_TEST_SSH_ENABLED === "1";
+if (enabled) process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-exec-home-"));
+const { pi, ai, textOf, createSession, callTool, notifications } = enabled ? await import("./pi.mjs") : {};
 
 const HOST = process.env.PI_EXEC_TEST_SSH ?? "localhost";
 const ssh = (script) => execFileSync("ssh", ["-o", "BatchMode=yes", HOST, script], { encoding: "utf8" });
-const sshReady = spawnSync("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", HOST, "true"], { stdio: "ignore" }).status === 0;
+const sshReady = enabled && spawnSync("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", HOST, "true"], { stdio: "ignore" }).status === 0;
 const alive = (pid) => spawnSync("ssh", ["-o", "BatchMode=yes", HOST, `kill -0 ${pid}`], { stdio: "ignore" }).status === 0;
 let root;
 
@@ -24,7 +25,7 @@ after(() => {
 	if (sshReady && root) spawnSync("ssh", ["-o", "BatchMode=yes", HOST, `rm -rf ${root}`], { stdio: "ignore" });
 });
 
-test("tools run on the SSH host, and timeout stops every process", { skip: !sshReady && `ssh ${HOST} is not available` }, async () => {
+test("tools run on the SSH host, and timeout stops every process", { skip: !enabled ? "run npm run test:ssh to enable" : !sshReady && `ssh ${HOST} is not available` }, async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-exec-cwd-"));
 	const session = await createSession({
 		cwd,
