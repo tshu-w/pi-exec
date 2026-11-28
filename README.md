@@ -45,7 +45,7 @@ The environment needs POSIX `sh`, and `setsid` or `perl`; grep also needs
 ## Development
 
 ```bash
-npm install
+npm ci
 npm run typecheck
 npm test
 ```
