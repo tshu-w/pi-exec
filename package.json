@@ -7,7 +7,7 @@
 	"repository": "github:tshu-w/pi-exec",
 	"type": "module",
 	"scripts": {
-		"test": "node --test --test-timeout=60000 tests/",
+		"test": "node --test --test-timeout=60000 \"tests/*.test.mjs\"",
 		"typecheck": "tsc -p tsconfig.json"
 	},
 	"pi": {
