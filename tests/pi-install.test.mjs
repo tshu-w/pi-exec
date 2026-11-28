@@ -87,7 +87,9 @@ test("integration files are inert without explicit opt-in", (t) => {
 	}
 	const env = { ...process.env, PATH: root, PI_EXEC_TEST_SSH_ENABLED: "0", PI_EXEC_TEST_DOCKER: "0" };
 	const files = ["ssh.test.mjs", "docker.test.mjs"].map((name) => fileURLToPath(new URL(name, import.meta.url)));
-	const result = spawnSync(process.execPath, ["--test", ...files], { env, encoding: "utf8", timeout: 10000 });
+	// Start an independent runner rather than inheriting the parent test protocol.
+	delete env.NODE_TEST_CONTEXT;
+	const result = spawnSync(process.execPath, ["--test", "--test-reporter=tap", ...files], { env, encoding: "utf8", timeout: 10000 });
 	assert.equal(result.status, 0, result.stdout + result.stderr);
 	assert.match(result.stdout, /# skipped 7/);
 	assert.equal(existsSync(marker), false);
